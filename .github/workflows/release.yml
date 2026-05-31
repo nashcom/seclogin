@@ -1,13 +1,9 @@
-name: Build and Test
+name: Build and Release
 
 on:
   push:
-    branches: [main]
     tags:
       - 'v*'
-
-  pull_request:
-    branches: [main]
 
   workflow_dispatch:
     inputs:
@@ -56,11 +52,12 @@ jobs:
           chmod +x testing/test_seclogin.sh
 
       - name: Determine version
+        shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-
-          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
-            VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
           fi
 
           echo "VERSION=$VERSION" >> $GITHUB_ENV
@@ -157,4 +154,3 @@ jobs:
             ```
 
             See README for full setup instructions.
-
