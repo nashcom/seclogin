@@ -1,0 +1,31 @@
+# Domino server identity in prompt
+# Add to ~notes/.bashrc
+
+_domino_cn()
+{
+    local ini="${NOTES_INI:-/local/notesdata/notes.ini}"
+    local val
+
+    [ -f "$ini" ] || return
+
+    val=$(grep -i "^ServerName=" "$ini" | head -1 | cut -d= -f2-)
+    [ -z "$val" ] && val=$(grep -i "^MailServer=" "$ini" | head -1 | cut -d= -f2-)
+    [ -z "$val" ] && return
+
+    # extract CN component
+    if [[ "$val" =~ ^[Cc][Nn]=([^/]+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo "$val"
+    fi
+}
+
+_DOMINO_CN=$(_domino_cn)
+
+if [ -n "$_DOMINO_CN" ]; then
+    PS1="[\u@\[\033[1;36m\]${_DOMINO_CN}\[\033[0m\] \W]\$ "
+else
+    PS1="[\u@\h \W]\$ "
+fi
+
+unset _DOMINO_CN

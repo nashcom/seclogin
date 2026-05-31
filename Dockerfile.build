@@ -1,0 +1,5 @@
+FROM alpine:latest
+
+RUN apk add --no-cache gcc musl-dev make openssl-dev openssl-libs-static zlib-static openssh oath-toolkit-oathtool expect bash dos2unix
+
+WORKDIR /build

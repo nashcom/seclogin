@@ -1,0 +1,35 @@
+# seclogin configuration
+# Shared settings used by all scripts
+# Format: KEY=value (no spaces around =, no quoting needed)
+
+# TOTP issuer name shown in authenticator apps
+ISSUER=seclogin
+
+# seclogin group owns the binary and config — add users here to grant access
+# sysadmin is a member of this group, not the owner
+ADMIN_GROUP=seclogin
+ADMIN_USER=sysadmin
+ADMIN_HOME=/home/sysadmin
+ADMIN_SHELL=/bin/bash
+
+# seclogin config directory — all runtime files live here
+SECLOGIN_DIR=/etc/seclogin
+
+# Config and install paths
+CONFIG_FILE=/etc/seclogin/seclogin.conf
+INSTALL_DIR=/usr/local/bin
+BIN=seclogin
+MODE=4750       # client/target: SUID root, seclogin group executes
+AUTH_MODE=0750  # auth server: no SUID, seclogin user executes via ForceCommand
+BIN_GATE=seclogin-gate  # gate mode binary name (SUID to seclogin user, not root)
+MODE_GATE=6755  # gate mode: SUID+SGID seclogin — sets both euid and egid to seclogin
+                # SGID required so egid=seclogin for group-readable config/secrets
+                # TODO: replace world-execute with a dedicated group for production
+
+# Dedicated user on the auth server for remote verification (ForceCommand)
+AUTH_USER=seclogin
+AUTH_HOME=/home/seclogin
+
+# Remote verification — auth key lives in /etc/ alongside other seclogin files
+# (same pattern as /etc/seclogin_known_hosts — system file, not tied to user home)
+AUTH_KEY_FILE=/etc/seclogin/seclogin_ed25519

@@ -1,0 +1,43 @@
+CC      = gcc
+
+# Version — override with: make VERSION=1.0.0
+# Falls back to git describe, then "dev"
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
+CFLAGS  = -O2                        \
+          -Wall -Wextra              \
+          -fstack-protector-strong   \
+          -D_FORTIFY_SOURCE=2        \
+          -ffunction-sections        \
+          -fdata-sections            \
+          -fvisibility=hidden        \
+          -static                    \
+          -DSECLOGIN_VERSION=\"$(VERSION)\"
+
+LDFLAGS = -static                    \
+          -Wl,-z,relro,-z,now        \
+          -Wl,--gc-sections          \
+          -lcrypto -lz -lpthread
+          # add -lssl when remote HMAC verification is implemented
+
+# Alpine packages required in container:
+#   apk add gcc musl-dev make openssl-dev openssl-libs-static zlib-static
+
+BIN     = seclogin
+GROUP   = seclogin
+MODE    = 4750
+PREFIX  = /usr/local/bin
+
+.PHONY: all install clean
+
+all: $(BIN)
+
+$(BIN): seclogin.c
+	$(CC) $(CFLAGS) seclogin.c -o $(BIN) $(LDFLAGS)
+	strip $(BIN)
+
+install: $(BIN)
+	install -o root -g $(GROUP) -m $(MODE) $(BIN) $(PREFIX)/$(BIN)
+
+clean:
+	rm -f $(BIN)

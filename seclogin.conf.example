@@ -1,0 +1,68 @@
+# seclogin configuration
+# owner: root:sysadmin  mode: 0640
+#
+# Contains no secrets — sysadmin group can read this file.
+# The TOTP secret is stored separately in /etc/seclogin.secret (root:root 0600),
+# readable only by the SUID binary (euid=root).
+#
+# Two operating modes:
+#   Local TOTP:  secret in /etc/seclogin.secret + optional algorithm here
+#   Remote:      set auth_server + auth_key (no secret on this server)
+#
+# -----------------------------------------------------------------------
+
+# -----------------------------------------------------------------------
+# LOCAL TOTP VERIFICATION
+# -----------------------------------------------------------------------
+
+# HMAC digest algorithm: SHA256 (recommended) or SHA1 (legacy app compat)
+# Default: SHA256
+#
+# algorithm=SHA256
+
+# Path to TOTP secret file — root:root 0600, only readable by root
+# Default: /etc/seclogin.secret  (generate with: sudo ./create_totp.sh)
+#
+# secret_file=/etc/seclogin.secret
+
+# -----------------------------------------------------------------------
+# REMOTE VERIFICATION (optional — replaces local TOTP)
+# -----------------------------------------------------------------------
+
+# Hostname or user@host of the remote auth server
+# When set, local TOTP is bypassed and verification is done remotely
+# The auth server must have seclogin installed with a valid secret
+#
+# auth_server=authsrv.example.com
+
+# SSH private key used to connect to the auth server
+# The corresponding public key must be in authorized_keys on the auth server
+# with: command="seclogin --verify",no-pty,no-port-forwarding,no-X11-forwarding
+#
+# auth_key=/home/sysadmin/.ssh/seclogin_ed25519
+
+# Note: SSH host key verification uses the standard ~/.ssh/known_hosts
+# Run once on target server: ssh-keyscan authsrv.example.com >> ~/.ssh/known_hosts
+
+# -----------------------------------------------------------------------
+# OPTIONAL
+# -----------------------------------------------------------------------
+
+# Debug logging — writes detailed trace to /var/log/seclogin-debug.log
+# Each line is prefixed with PID and UTC timestamp.
+# Never enable in production — disable once issue is diagnosed.
+# Default: disabled
+#
+# debug=1
+
+# Debug delay — inject N seconds of sleep on the target side after receiving
+# the remote nonce. Used to test nonce expiry (NONCE_MAX_AGE=10s).
+# Only active when debug=1. Has no effect in production.
+#
+# test_delay=12
+
+# Path to Domino/HCL Notes notes.ini
+# If the file exists the server name is shown in the privilege banner
+# Default: /local/notesdata/notes.ini
+#
+notes_ini=/local/notesdata/notes.ini
