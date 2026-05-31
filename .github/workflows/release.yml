@@ -1,0 +1,160 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+
+  pull_request:
+    branches: [main]
+
+  workflow_dispatch:
+    inputs:
+      quick:
+        description: 'Skip delay-heavy tests (faster run)'
+        type: boolean
+        default: false
+
+jobs:
+  build-test:
+    name: Build and test (Alpine static)
+
+    runs-on: ubuntu-latest
+
+    container:
+      image: alpine:latest
+      options: >-
+        --cap-add SETUID
+        --cap-add SETGID
+        --cap-add SYS_ADMIN
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build and test dependencies
+        run: |
+          apk add --no-cache \
+            gcc \
+            musl-dev \
+            make \
+            openssl-dev \
+            openssl-libs-static \
+            zlib-static \
+            openssh \
+            oath-toolkit-oathtool \
+            expect \
+            bash \
+            dos2unix \
+            file \
+            git \
+            shadow
+
+      - name: Prepare test environment
+        run: |
+          chmod +x testing/test_seclogin.sh
+
+      - name: Determine version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
+          fi
+
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Using VERSION=$VERSION"
+
+      - name: Build static binary
+        run: |
+          make -f Makefile.alpine clean all VERSION="$VERSION"
+
+          cp seclogin "seclogin-$VERSION"
+
+          sha256sum "seclogin-$VERSION" \
+            | cut -f1 -d' ' > "seclogin-$VERSION.sha256"
+
+      - name: Binary info
+        run: |
+          file seclogin
+          ls -lh
+          strings seclogin | grep "etc/seclogin" | sort -u || true
+
+      - name: Run test suite
+        shell: bash
+        run: |
+          QUICK_FLAG=""
+
+          if [ "${{ github.event.inputs.quick }}" = "true" ]; then
+            QUICK_FLAG="--quick"
+          fi
+
+          dos2unix testing/test_seclogin.sh
+
+          ROOT_DIR=$(pwd) \
+            bash testing/test_seclogin.sh $QUICK_FLAG
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: seclogin-release-files
+          path: |
+            seclogin-*
+          retention-days: 90
+
+  release:
+    name: Publish release
+
+    needs: build-test
+
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: seclogin-release-files
+
+      - name: Show files
+        run: |
+          ls -lh
+          chmod +x seclogin-* || true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            seclogin-*
+          generate_release_notes: true
+
+          body: |
+            ## seclogin — Secure Enforced Login
+
+            Statically linked binary built on Alpine Linux (musl libc).
+
+            No runtime dependencies — deploy anywhere.
+
+            ### Installation
+
+            ```bash
+            # Client / target server (SUID root)
+            sudo install -o root -g seclogin -m 4750 \
+              seclogin /usr/local/bin/seclogin
+
+            # Auth server (no SUID)
+            sudo install -o root -g seclogin -m 0750 \
+              seclogin /usr/local/bin/seclogin
+
+            # Gate mode (SUID+SGID to seclogin user)
+            sudo install -o seclogin -g seclogin -m 6755 \
+              seclogin /usr/local/bin/seclogin-gate
+            ```
+
+            See README for full setup instructions.
+
