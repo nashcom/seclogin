@@ -281,13 +281,13 @@ sudo ./create_totp.sh SHA1      # for Microsoft Authenticator
 
 ### Authenticator app compatibility
 
-| App | SHA1 | SHA256 |
-|---|---|---|
-| Google Authenticator | ✓ | ✓ |
-| Aegis (Android) | ✓ | ✓ |
-| andOTP | ✓ | ✓ |
-| YubiKey Authenticator | ✓ | ✓ |
-| Microsoft Authenticator | ✓ | ✗ — silently falls back to SHA1 |
+| App                     | SHA1 | SHA256 |
+|-------------------------|------|--------|
+| Google Authenticator    | ✓    | ✓      |
+| Aegis (Android)         | ✓    | ✓      |
+| andOTP                  | ✓    | ✓      |
+| YubiKey Authenticator   | ✓    | ✓      |
+| Microsoft Authenticator | ✓    | ✗ — silently falls back to SHA1 |
 
 SHA256 is the default. Use `SHA1` only if your app does not support SHA256.
 
@@ -450,10 +450,12 @@ exposes nothing sensitive.
 ```
 Local (target server)                  Remote (auth server, ForceCommand)
 ────────────────────────────────────────────────────────────────────────
+
 seclogin collects user code
 fork unprivileged child
+
   │
-  │── ssh seclogin@authsrv ──────────►│  seclogin --verify (no SUID, unprivileged)
+  │── ssh seclogin@authsrv ───────────►│  seclogin --verify (no SUID, unprivileged)
   │                                    │── generate remote_nonce
   │                                    │   = timestamp(4) || random(12)
   │◄── remote_nonce ───────────────────│
@@ -467,6 +469,7 @@ fork unprivileged child
   │                                    │── log result + reason
   │◄── ok / fail ──────────────────────│   (fail adds 5s delay)
   │                                    │
+
 child reports result to parent
 if ok → privilege elevation
 ```
@@ -489,13 +492,13 @@ connections at the host layer with Fail2Ban or CrowdSec on the auth server.
 
 ### Why this is stronger than local TOTP
 
-| | Local TOTP | Remote verification |
-|---|---|---|
-| Secret location | every target server | auth server only |
-| Target server compromise | exposes TOTP secret | exposes nothing |
-| Replay protection | 30s TOTP time window | nonce expires after 10s |
-| Brute force rate limit | sshd connection overhead | 5s delay per failed attempt |
-| Audit trail | local syslog only | centralised on auth server |
+|                          | Local TOTP               |Remote verification  |
+|--------------------------|--------------------------|---------------------|
+| Secret location          | every target server      | auth server only    |
+| Target server compromise | exposes TOTP secret      | exposes nothing     |
+| Replay protection        | 30s TOTP time window     | nonce expires after 10s     |
+| Brute force rate limit   | sshd connection overhead | 5s delay per failed attempt |
+| Audit trail              | local syslog only        | centralised on auth server  |
 
 ### Auth server setup
 
@@ -573,15 +576,15 @@ the fingerprint must be manually verified against the auth server output).
 
 ### Remote verification configuration
 
-| Key | Values | Default | Description |
-|---|---|---|---|
-| `auth_server` | `user@host` | — | Auth server — enables remote mode when set |
-| `auth_key` | file path | — | SSH private key for connecting to auth server |
-| `known_hosts` | file path | `/etc/seclogin_known_hosts` | Known hosts file for auth server verification |
-| `notes_ini` | file path | `/local/notesdata/notes.ini` | Domino notes.ini (optional) |
-| `reason` | `0`, `1`, `2` | `0` | Reason prompt mode |
-| `allow` / `deny` | CIDR | — | IP access control rules |
-| `debug` | `1` | disabled | Write trace log to `/var/log/seclogin-debug.log` |
+| Key              | Values         | Default  | Description |
+|------------------|----------------|----------|-------------|
+| `auth_server`    | `user@host`    | —        | Auth server — enables remote mode when set    |
+| `auth_key`       | file path      | —        | SSH private key for connecting to auth server |
+| `known_hosts`    | file path      | `/etc/seclogin_known_hosts`        | Known hosts file for auth server verification |
+| `notes_ini`      | file path      | `/local/notesdata/notes.ini`       | Domino notes.ini (optional) |
+| `reason`         | `0`, `1`, `2`  | `0`      | Reason prompt mode      |
+| `allow` / `deny` | CIDR           | —        | IP access control rules |
+| `debug`          | `1`            | disabled | Write trace log to `/var/log/seclogin-debug.log` |
 
 ---
 
@@ -780,19 +783,19 @@ provisions a known test secret, and exercises seclogin end-to-end via
 
 ### What is tested
 
-| Test | Mode | Description |
-|---|---|---|
-| Binary permissions | — | SUID bit set, owned `root:seclogin` |
-| Valid TOTP code | Local | Correct code grants root shell |
-| Invalid TOTP code | Local | Wrong code rejected + 5s delay enforced |
-| Wrong binary permissions | Local | Non-SUID binary rejected at startup |
-| Missing config file | Local | Defaults applied, auth still works |
-| Secret wrong permissions | Local | World-readable secret rejected |
-| allow= rule | Local | Matching IP permitted before prompt |
-| deny= rule | Local | Blocked IP rejected before prompt |
-| Remote valid code | Remote | Correct code approved via auth server |
-| Remote invalid code | Remote | Wrong code denied + 5s delay enforced |
-| Remote nonce expiry | Remote | `test_delay=12` forces nonce past 10s limit |
+| Test                     | Mode       | Description |
+|--------------------------|------------|-------------|
+| Binary permissions       | —          | SUID bit set, owned `root:seclogin` |
+| Valid TOTP code          | Local      | Correct code grants root shell |
+| Invalid TOTP code        | Local      | Wrong code rejected + 5s delay enforced |
+| Wrong binary permissions | Local      | Non-SUID binary rejected at startup |
+| Missing config file      | Local      | Defaults applied, auth still works |
+| Secret wrong permissions | Local      | World-readable secret rejected |
+| allow= rule              | Local      | Matching IP permitted before prompt |
+| deny= rule               | Local      | Blocked IP rejected before prompt |
+| Remote valid code        | Remote     | Correct code approved via auth server |
+| Remote invalid code      | Remote     | Wrong code denied + 5s delay enforced |
+| Remote nonce expiry      | Remote     | `test_delay=12` forces nonce past 10s limit |
 
 `--quick` skips the three delay-heavy tests (invalid code ×2, nonce expiry),
 reducing runtime from ~26s to ~5s.
@@ -906,11 +909,11 @@ on top.
 
 A recommended mapping:
 
-| Certificate principal | Account | seclogin binary | Result |
-|---|---|---|---|
-| `sysadmin` | sysadmin | `seclogin` (4750 SUID root) | Root shell after TOTP |
-| `notes` | notes | `seclogin-gate` (6755 login shell) | Notes shell after TOTP |
-| `backup` | backup | `seclogin-gate` | Backup shell after TOTP |
+| Certificate principal | Account  | seclogin binary             | Result                  |
+|-----------------------|----------|-----------------------------|-------------------------|
+| `sysadmin`            | sysadmin | `seclogin` (4750 SUID root) | Root shell after TOTP   |
+| `notes`               | notes    | `seclogin-gate` (6755 login shell) | Notes shell after TOTP |
+| `backup`              | backup   | `seclogin-gate`             | Backup shell after TOTP |
 
 Each user gets a separate signed certificate per role. Certificates expire
 automatically. Revoking access means not renewing the certificate — no server-side
@@ -948,8 +951,8 @@ it applies regardless of how the SSH session was established.
 
 ## Security design
 
-| Measure | Detail |
-|---|---|
+| Measure              | Detail         |
+|----------------------|----------------|
 | `root:seclogin 4750` | Only `seclogin` group members can execute the SUID binary |
 | No SUID on auth server | Auth server binary is `0750` — verify mode runs unprivileged |
 | `seteuid(getuid())` in verify | Drops SUID euid immediately — verify mode runs as `seclogin` user |
@@ -985,52 +988,52 @@ it applies regardless of how the SSH session was established.
 
 ### Source and build
 
-| File | Purpose |
-|---|---|
-| `seclogin.c` | Main source |
-| `Makefile` | Dynamic build (host toolchain) |
+| File              | Purpose     |
+|-------------------|-------------|
+| `seclogin.c`      | Main source |
+| `Makefile`        | Dynamic build (host toolchain) |
 | `Makefile.alpine` | Static build (Alpine container) |
-| `Dockerfile.build` | Alpine build image definition |
+| `Dockerfile.build`| Alpine build image definition |
 | `build_alpine.sh` | Build, test, and install via Docker (installs both `seclogin` and `seclogin-gate`) |
 
 ### Configuration
 
-| File | Purpose |
-|---|---|
+| File     | Purpose |
+|----------|---------|
 | `config` | Site-specific settings sourced by all scripts |
 
 ### Setup scripts
 
-| Script | Run on | Purpose |
-|---|---|---|
-| `install_deps.sh` | Any | Install `oathtool` and `qrencode` |
-| `create_accounts.sh` | Any | Create `seclogin` group and `sysadmin` user |
-| `configure_sshd.sh` | Any | Configure sshd (LogLevel VERBOSE, key+password auth) |
-| `setup_auth_server.sh` | Auth server | Full auth server setup (orchestrates scripts below) |
-| `create_seclogin_user.sh` | Auth server | Create `seclogin` service account |
-| `create_totp.sh` | Auth server / client | Generate TOTP secret and config |
-| `create_auth_key.sh` | Auth server | Generate SSH keypair for target servers |
-| `install_auth_key.sh` | Auth server | Install public key with ForceCommand |
-| `show_target_config.sh` | Auth server | Print per-target deployment instructions |
+| Script                    | Run on               | Purpose |
+|---------------------------|----------------------|---------|
+| `install_deps.sh`         | Any                  | Install `oathtool` and `qrencode` |
+| `create_accounts.sh`      | Any                  | Create `seclogin` group and `sysadmin` user |
+| `configure_sshd.sh`       | Any                  | Configure sshd (LogLevel VERBOSE, key+password auth) |
+| `setup_auth_server.sh`    | Auth server          | Full auth server setup (orchestrates scripts below) |
+| `create_seclogin_user.sh` | Auth server          | Create `seclogin` service account |
+| `create_totp.sh`          | Auth server / client | Generate TOTP secret and config |
+| `create_auth_key.sh`      | Auth server          | Generate SSH keypair for target servers |
+| `install_auth_key.sh`     | Auth server          | Install public key with ForceCommand |
+| `show_target_config.sh`   | Auth server          | Print per-target deployment instructions |
 
 ### Operational scripts
 
-| Script | Purpose |
-|---|---|
-| `status.sh` | Show installed files and permissions; `--delete` to remove everything |
-| `get_code.sh` | Print current TOTP code (auto-detects secret file) |
-| `show_totp_qr.sh` | Re-display QR code for re-enrollment |
-| `show_syslog.sh` | Show seclogin syslog entries (passes args to journalctl) |
+| Script              | Purpose                                                               |
+|---------------------|-----------------------------------------------------------------------|
+| `status.sh`         | Show installed files and permissions; `--delete` to remove everything |
+| `get_code.sh`       | Print current TOTP code (auto-detects secret file) |
+| `show_totp_qr.sh`   | Re-display QR code for re-enrollment |
+| `show_syslog.sh`    | Show seclogin syslog entries (passes args to journalctl) |
 | `show_syslog.sh -f` | Follow seclogin log live |
 
 ### Testing
 
-| File | Purpose |
-|---|---|
+| File | Purpose                                                                    |
+|------|----------------------------------------------------------------------------|
 | `testing/test_seclogin.sh` | End-to-end test suite — runs inside Alpine container |
 
 ### Snippets
 
-| File | Purpose |
-|---|---|
+| File                   | Purpose                                                |
+|------------------------|--------------------------------------------------------|
 | `notes_bashrc_snippet` | `.bashrc` snippet showing Domino server name in prompt |

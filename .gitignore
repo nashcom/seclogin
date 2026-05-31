@@ -6,4 +6,5 @@
 *.out
 
 seclogin
+seclogin-*
 totp-sysadmin.png
