@@ -44,7 +44,6 @@ jobs:
             bash \
             dos2unix \
             file \
-            git \
             shadow
 
       - name: Prepare test environment
@@ -54,10 +53,12 @@ jobs:
       - name: Determine version
         shell: bash
         run: |
+          cd "$GITHUB_WORKSPACE"
+
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            VERSION="dev-$(git rev-parse --short HEAD)"
+            VERSION="dev-${GITHUB_SHA::7}"
           fi
 
           echo "VERSION=$VERSION" >> $GITHUB_ENV
