@@ -25,6 +25,8 @@ BIN_GATE=seclogin-gate  # gate mode binary name (SUID to seclogin user, not root
 MODE_GATE=6755  # gate mode: SUID+SGID seclogin — sets both euid and egid to seclogin
                 # SGID required so egid=seclogin for group-readable config/secrets
                 # TODO: replace world-execute with a dedicated group for production
+BIN_RECOVERY=seclogin-recovery  # recovery code admin tool
+MODE_RECOVERY=0700              # root only — no group or world access
 
 # Dedicated user on the auth server for remote verification (ForceCommand)
 AUTH_USER=seclogin

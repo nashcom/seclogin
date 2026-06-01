@@ -67,8 +67,10 @@ ALGO=$(grep -i "^algorithm=" "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2-
 ALGO="${ALGO:-SHA256}"
 
 echo "Secret: $SECRET_FILE"
+echo
 if [ "${ALGO^^}" = "SHA1" ]; then
     oathtool --totp -b "$SECRET"
 else
     oathtool --totp=sha256 -b "$SECRET"
 fi
+echo

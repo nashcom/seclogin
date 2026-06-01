@@ -23,21 +23,29 @@ LDFLAGS = -static                    \
 # Alpine packages required in container:
 #   apk add gcc musl-dev make openssl-dev openssl-libs-static zlib-static
 
-BIN     = seclogin
+BIN          = seclogin
+BIN_RECOVERY = seclogin-recovery
 GROUP   = seclogin
 MODE    = 4750
 PREFIX  = /usr/local/bin
 
 .PHONY: all install clean
 
-all: $(BIN)
+all: $(BIN) $(BIN_RECOVERY)
 
-$(BIN): seclogin.c
-	$(CC) $(CFLAGS) seclogin.c -o $(BIN) $(LDFLAGS)
+$(BIN): seclogin.c scratchcodes.c scratchcodes.h
+	$(CC) $(CFLAGS) seclogin.c scratchcodes.c -o $(BIN) $(LDFLAGS)
 	strip $(BIN)
+
+$(BIN_RECOVERY): scratchcodes.c recovery_main.c scratchcodes.h
+	$(CC) $(CFLAGS) scratchcodes.c recovery_main.c -o $(BIN_RECOVERY) $(LDFLAGS)
+	strip $(BIN_RECOVERY)
 
 install: $(BIN)
 	install -o root -g $(GROUP) -m $(MODE) $(BIN) $(PREFIX)/$(BIN)
 
+install-recovery: $(BIN_RECOVERY)
+	install -o root -g root -m 0700 $(BIN_RECOVERY) $(PREFIX)/$(BIN_RECOVERY)
+
 clean:
-	rm -f $(BIN)
+	rm -f $(BIN) $(BIN_RECOVERY)

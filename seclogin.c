@@ -58,6 +58,9 @@
 #include <stdarg.h>
 
 #include <arpa/inet.h>
+#include <sys/file.h>
+
+#include "scratchcodes.h"
 #include <netinet/in.h>
 
 
@@ -1859,7 +1862,7 @@ static int check_secret_access(void)
 static int authenticate_totp(const char *pszClientIp, char *pszReason, size_t cbReason,
                              const char *pszTarget)
 {
-    char   szCode[16]          = {0};
+    char   szCode[CODE_STR_LEN + 2] = {0};  /* large enough for TOTP (6) or recovery code (29) + newline + NUL */
     char   szReasonMode[8]     = {0};
     size_t cbLen               = 0;
     size_t i                   = 0;
@@ -1910,18 +1913,55 @@ static int authenticate_totp(const char *pszClientIp, char *pszReason, size_t cb
 
     cbLen = strlen(szCode);
 
+    debug_log("authenticate_totp: raw input len=%zu buf_size=%zu",
+              cbLen, sizeof(szCode));
+
     if (cbLen > 0 && szCode[cbLen - 1] == '\n')
         szCode[cbLen - 1] = '\0';
 
     cbLen = strlen(szCode);
 
+    debug_log("authenticate_totp: stripped len=%zu", cbLen);
+
+    /* --- recovery code path (XXXX-XXXX-XXXX-XXXX-XXXX-XXXX = 29 chars) --- */
+    if (cbLen == CODE_STR_LEN - 1)
+    {
+        debug_log("authenticate_totp: recovery code path len=%zu", cbLen);
+
+        int nRemaining = 0;
+        int nRet = recovery_verify(szCode, &nRemaining);
+        explicit_bzero(szCode, sizeof(szCode));
+
+        if (nRet == RECOVERY_OK)
+        {
+            syslog(LOG_AUTH | LOG_CRIT,
+                   "seclogin: auth=success method=recovery-code target=%s uid=%d %s remaining=%d",
+                   pszTarget, (int) getuid(),
+                   pszClientIp ? pszClientIp : "src=unknown",
+                   nRemaining);
+            return 0;
+        }
+
+        auth_error("Authentication failed");
+        syslog(LOG_AUTH | LOG_WARNING,
+               "seclogin: auth=failed method=recovery-code target=%s uid=%d %s",
+               pszTarget, (int) getuid(),
+               pszClientIp ? pszClientIp : "src=unknown");
+        debug_log("authenticate_totp: recovery code rejected ret=%d", nRet);
+        sleep(AUTH_FAIL_DELAY);
+        return -1;
+    }
+
+    /* --- TOTP path --- */
     if (cbLen != 6)
     {
         auth_error("Authentication failed");
         syslog(LOG_AUTH | LOG_WARNING,
-               "seclogin: auth=failed target=%s uid=%d %s msg=\"invalid passcode length\"",
+               "seclogin: auth=failed target=%s uid=%d %s msg=\"invalid passcode length=%zu\"",
                pszTarget, (int) getuid(),
-               pszClientIp ? pszClientIp : "src=unknown");
+               pszClientIp ? pszClientIp : "src=unknown",
+               cbLen);
+        debug_log("authenticate_totp: rejected len=%zu expected 6", cbLen);
         explicit_bzero(szCode, sizeof(szCode));
         sleep(AUTH_FAIL_DELAY);
         return -1;

@@ -163,7 +163,7 @@ binary (`4750` — group execute only).
 
 ## Customisation
 
-All site-specific settings live in **`config`**. Edit this file before
+All site-specific settings live in **`scripts/config`**. Edit this file before
 running any other script.
 
 ```bash
@@ -651,6 +651,107 @@ seclogin: auth=failed  target=notes uid=1005 src=192.168.1.50 port=38824
 
 ---
 
+## Recovery codes
+
+Recovery codes are single-use emergency codes that replace TOTP when the
+authenticator device is unavailable. SSH key authentication is still required —
+recovery codes replace only the TOTP factor.
+
+### Security model
+
+```
+Normal login:    SSH key/cert  +  TOTP
+Emergency login: SSH key/cert  +  Recovery code
+```
+
+Recovery codes are intended for lost authenticator, broken phone, or emergency
+access scenarios. Each code is consumed on first use and cannot be reused.
+
+### Setup
+
+```bash
+# Generate 5 recovery codes (root only)
+sudo seclogin-recovery generate
+
+# Store these recovery codes securely.
+# Each code can only be used once.
+# Previous recovery codes are now invalid.
+#
+#   7F9D-B821-8A77-41A0-9F0C-CE22
+#   ...
+
+# Check how many codes remain
+sudo seclogin-recovery list
+```
+
+Codes are printed **once** to stdout. Store them securely offline.
+Running `generate` again invalidates all previous codes.
+
+### Using a recovery code
+
+At the `Passcode:` prompt, enter the recovery code instead of the TOTP code:
+
+```
+  Passcode:  7F9D-B821-8A77-41A0-9F0C-CE22
+```
+
+The code is verified, consumed, and the session continues normally.
+Generate a new set of codes as soon as the authenticator is restored.
+
+### Storage
+
+Recovery codes are stored hashed in `/etc/seclogin/recovery.conf`:
+
+```
+pbkdf2_sha512:250000:<salt_base64>:<hash_base64>
+```
+
+One entry per line. Parameters are stored per entry to allow future changes
+without regenerating all codes. File: `root:seclogin 0640` — owned by root,
+group-readable by `seclogin` so both root shell mode and gate mode can verify codes.
+
+### Logging
+
+Recovery code usage is logged at `LOG_CRIT` — always an emergency event:
+
+```
+seclogin: auth=success method=recovery-code target=root uid=1001 src=192.168.1.50 port=38824 remaining=4
+seclogin: auth=failed  method=recovery-code target=root uid=1001 src=192.168.1.50 port=38824
+```
+
+`remaining=N` shows how many codes are left after a successful verification.
+
+### `seclogin-recovery` commands
+
+| Command | Description |
+|---|---|
+| `sudo seclogin-recovery generate` | Generate 5 new codes, print once, store hashed |
+| `sudo seclogin-recovery list` | Show count of remaining codes |
+| `sudo seclogin-recovery verify <code>` | Verify and consume one code directly |
+| `sudo seclogin-recovery test` | Run self-test suite |
+
+`seclogin-recovery` is installed `root:root 0700` — only root can run it.
+Admin operations are intentionally separated from the SUID `seclogin` binary.
+
+### Works in both local and remote mode
+
+Recovery codes work regardless of whether seclogin is configured for local TOTP
+or remote HMAC verification. Verification happens on the target before the remote
+SSH call is attempted — so recovery codes remain available even when the auth
+server is unreachable. This is by design: the scenarios that require a recovery
+code (lost authenticator, broken phone) are exactly the scenarios where the normal
+auth path may also be unavailable.
+
+### Crypto
+
+- PBKDF2-HMAC-SHA512, 250,000 iterations, 16-byte random salt, 64-byte hash
+- Code format: `XXXX-XXXX-XXXX-XXXX-XXXX-XXXX` (120-bit entropy)
+- Unambiguous alphabet: no `0`/`O`, `1`/`I` confusion
+- `flock` advisory lock — race-free single-use enforcement across parallel attempts
+- File safety check: rejects symlinks, non-root ownership, group/other-writable files
+
+---
+
 ## Logging and audit trail
 
 seclogin logs events to syslog (`LOG_AUTH`) in `key=value` format.
@@ -677,6 +778,11 @@ msg=        error description (on failure/error entries)
 ```
 seclogin: auth=success target=root uid=1001 src=192.168.1.50 port=38824
 seclogin: auth=success target=root uid=1001 src=192.168.1.50 port=38824 reason="deploying hotfix"
+```
+
+**Recovery code used (LOG_CRIT):**
+```
+seclogin: auth=success method=recovery-code target=root uid=1001 src=192.168.1.50 port=38824 remaining=4
 ```
 
 **Failed authentication:**
@@ -783,19 +889,26 @@ provisions a known test secret, and exercises seclogin end-to-end via
 
 ### What is tested
 
-| Test                     | Mode       | Description |
-|--------------------------|------------|-------------|
-| Binary permissions       | —          | SUID bit set, owned `root:seclogin` |
-| Valid TOTP code          | Local      | Correct code grants root shell |
-| Invalid TOTP code        | Local      | Wrong code rejected + 5s delay enforced |
-| Wrong binary permissions | Local      | Non-SUID binary rejected at startup |
-| Missing config file      | Local      | Defaults applied, auth still works |
-| Secret wrong permissions | Local      | World-readable secret rejected |
-| allow= rule              | Local      | Matching IP permitted before prompt |
-| deny= rule               | Local      | Blocked IP rejected before prompt |
-| Remote valid code        | Remote     | Correct code approved via auth server |
-| Remote invalid code      | Remote     | Wrong code denied + 5s delay enforced |
-| Remote nonce expiry      | Remote     | `test_delay=12` forces nonce past 10s limit |
+| Test                              | Mode       | Description |
+|-----------------------------------|------------|-------------|
+| Binary permissions                | —          | SUID bit set, owned `root:seclogin` |
+| SUID binary symbol check          | —          | Asserts admin recovery symbols absent from SUID binary |
+| Valid TOTP code                   | Local      | Correct code grants root shell |
+| Invalid TOTP code                 | Local      | Wrong code rejected + 5s delay enforced |
+| Wrong binary permissions          | Local      | Non-SUID binary rejected at startup |
+| Missing config file               | Local      | Defaults applied, auth still works |
+| Secret wrong permissions          | Local      | World-readable secret rejected |
+| allow= rule                       | Local      | Matching IP permitted before prompt |
+| deny= rule                        | Local      | Blocked IP rejected before prompt |
+| Recovery generate                 | Recovery   | 5 hashed codes written to recovery.conf |
+| Recovery file permissions         | Recovery   | `root:seclogin 0640` — readable by gate mode |
+| Recovery list                     | Recovery   | Remaining count reported correctly |
+| Recovery generate non-root        | Recovery   | Rejected when not root |
+| Recovery verify — accepted        | Recovery   | Code consumed, entry removed from file |
+| Recovery verify — single-use      | Recovery   | Same code rejected on second attempt |
+| Remote valid code                 | Remote     | Correct code approved via auth server |
+| Remote invalid code               | Remote     | Wrong code denied + 5s delay enforced |
+| Remote nonce expiry               | Remote     | `test_delay=12` forces nonce past 10s limit |
 
 `--quick` skips the three delay-heavy tests (invalid code ×2, nonce expiry),
 reducing runtime from ~26s to ~5s.
@@ -981,6 +1094,9 @@ it applies regardless of how the SSH session was established.
 | Static binary (Alpine build) | No dynamic linker — `LD_PRELOAD` has no attack surface |
 | Full RELRO + PIE | `-Wl,-z,relro,-z,now` + `-fPIE -pie` — GOT read-only, ASLR enabled |
 | Structured syslog | `key=value` format — grep-friendly, SIEM-ready |
+| Recovery codes | PBKDF2-HMAC-SHA512 single-use codes, `flock`-protected, `LOG_CRIT` on use |
+| Recovery admin isolated | `seclogin-recovery` (`root:root 0700`) — admin ops outside SUID binary |
+| SUID symbol test | Test suite asserts `recovery_generate`/`recovery_list` absent from SUID binary |
 
 ---
 
@@ -988,13 +1104,16 @@ it applies regardless of how the SSH session was established.
 
 ### Source and build
 
-| File              | Purpose     |
-|-------------------|-------------|
-| `seclogin.c`      | Main source |
-| `Makefile`        | Dynamic build (host toolchain) |
-| `Makefile.alpine` | Static build (Alpine container) |
-| `Dockerfile.build`| Alpine build image definition |
-| `build_alpine.sh` | Build, test, and install via Docker (installs both `seclogin` and `seclogin-gate`) |
+| File                | Purpose     |
+|---------------------|-------------|
+| `seclogin.c`        | Main source — auth gate, all modes |
+| `scratchcodes.c`    | Recovery code module |
+| `scratchcodes.h`    | Recovery code API |
+| `recovery_main.c`   | `seclogin-recovery` CLI + self-test harness |
+| `Makefile`          | Dynamic build (host toolchain) |
+| `Makefile.alpine`   | Static build (Alpine container) |
+| `Dockerfile.build`  | Alpine build image definition |
+| `build_alpine.sh`   | Build, test, and install via Docker |
 
 ### Configuration
 
@@ -1031,6 +1150,14 @@ it applies regardless of how the SSH session was established.
 | File | Purpose                                                                    |
 |------|----------------------------------------------------------------------------|
 | `testing/test_seclogin.sh` | End-to-end test suite — runs inside Alpine container |
+
+### Recovery
+
+| Script | Purpose |
+|---|---|
+| `sudo seclogin-recovery generate` | Generate recovery codes |
+| `sudo seclogin-recovery list` | Show remaining code count |
+| `sudo seclogin-recovery test` | Run recovery module self-tests |
 
 ### Snippets
 

@@ -22,6 +22,7 @@ LDFLAGS = -pie                       \
 
 BIN          = seclogin
 BIN_GATE     = seclogin-gate
+BIN_RECOVERY = seclogin-recovery
 
 PREFIX       = /usr/local/bin
 
@@ -36,12 +37,15 @@ GATE_USER    = seclogin
 GATE_GROUP   = seclogin
 MODE_GATE    = 6755
 
-.PHONY: all install install-gate clean
+.PHONY: all install install-gate install-recovery clean
 
-all: $(BIN)
+all: $(BIN) $(BIN_RECOVERY)
 
-$(BIN): seclogin.c
-	$(CC) $(CFLAGS) seclogin.c -o $(BIN) $(LDFLAGS)
+$(BIN): seclogin.c scratchcodes.c scratchcodes.h
+	$(CC) $(CFLAGS) seclogin.c scratchcodes.c -o $(BIN) $(LDFLAGS)
+
+$(BIN_RECOVERY): scratchcodes.c recovery_main.c scratchcodes.h
+	$(CC) $(CFLAGS) scratchcodes.c recovery_main.c -o $(BIN_RECOVERY) $(LDFLAGS)
 
 install: $(BIN)
 	@echo "Installing $(BIN) → $(PREFIX)/$(BIN)  (root:$(GROUP) $(MODE))"
@@ -58,5 +62,10 @@ install-gate: $(BIN)
 	install -o $(GATE_USER) -g $(GATE_GROUP) -m $(MODE_GATE) $(BIN) $(PREFIX)/$(BIN_GATE)
 	ls -lh $(PREFIX)/$(BIN_GATE)
 
+install-recovery: $(BIN_RECOVERY)
+	@echo "Installing $(BIN_RECOVERY) → $(PREFIX)/$(BIN_RECOVERY)  (root:root 0700)"
+	install -o root -g root -m 0700 $(BIN_RECOVERY) $(PREFIX)/$(BIN_RECOVERY)
+	ls -lh $(PREFIX)/$(BIN_RECOVERY)
+
 clean:
-	rm -f $(BIN)
+	rm -f $(BIN) $(BIN_RECOVERY)

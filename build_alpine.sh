@@ -15,7 +15,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/config"
+source "$SCRIPT_DIR/scripts/config"
 
 IMAGE="seclogin-build"
 

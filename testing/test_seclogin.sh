@@ -31,6 +31,7 @@ AUTH_GID=2001
 AUTH_HOME=/home/seclogin
 SSH_PORT=2222
 BIN=/usr/local/bin/seclogin
+BIN_RECOVERY=/usr/local/bin/seclogin-recovery
 
 # Fixed test secret — SHA256 TOTP
 TEST_SECRET="JBSWY3DPEHPK3PXP"
@@ -130,7 +131,8 @@ header "Installing test dependencies"
 info "openssh         — sshd for loopback test sessions"
 info "oath-toolkit    — oathtool to generate TOTP codes"
 info "expect          — drives interactive passcode prompt"
-apk add --quiet openssh oath-toolkit-oathtool expect bash dos2unix
+info "binutils        — nm for symbol inspection"
+apk add --quiet openssh oath-toolkit-oathtool expect bash dos2unix binutils
 info "Done."
 
 header "Setting up test environment"
@@ -162,6 +164,10 @@ info "test only. run_verify_mode() calls seteuid(getuid()) immediately, so --ver
 info "behaves as unprivileged even when the binary has the SUID bit set."
 install -o root -g "$ADMIN_GROUP" -m 4750 "$ROOT_DIR/seclogin" "$BIN"
 ls -lh "$BIN"
+
+info "Installing seclogin-recovery: root:root 0700"
+install -o root -g root -m 0700 "$ROOT_DIR/seclogin-recovery" "$BIN_RECOVERY"
+ls -lh "$BIN_RECOVERY"
 
 info "Creating /etc/seclogin config directory"
 mkdir -p /etc/seclogin
@@ -267,6 +273,28 @@ fi
 echo
 info "seclogin verifies its own SUID bit and ownership at startup."
 info "If the binary is not root-owned SUID it refuses to run."
+
+# ---------------------------------------------------------------------------
+
+test_case "SUID binary does not contain admin-only recovery symbols"
+
+nFail_symbols=0
+for sym in recovery_generate recovery_list generate_code hash_code; do
+    if nm "$BIN" 2>/dev/null | grep -q " T ${sym}$"; then
+        info "FAIL: symbol '${sym}' found in $BIN"
+        nFail_symbols=$((nFail_symbols + 1))
+    fi
+done
+
+if [ "$nFail_symbols" -eq 0 ]; then
+    pass "No admin-only recovery symbols in SUID binary"
+else
+    fail "$nFail_symbols admin-only symbol(s) found in SUID binary"
+fi
+
+echo
+info "recovery_generate/list and crypto helpers must be absent from the SUID binary."
+info "Only recovery_verify and its dependencies should be linked in."
 
 # ---------------------------------------------------------------------------
 
@@ -498,6 +526,136 @@ esac
 
 echo
 info "deny=::1 and deny=127.0.0.1 block loopback connections before any prompt."
+
+# ---------------------------------------------------------------------------
+# Recovery code tests — local mode, run as root in container
+# ---------------------------------------------------------------------------
+
+header "Recovery code tests"
+
+info "Switching config back to local TOTP mode for recovery tests"
+cat > /etc/seclogin/seclogin.conf << EOF
+algorithm=SHA256
+debug=1
+EOF
+chown "root:$ADMIN_GROUP" /etc/seclogin/seclogin.conf
+chmod 640 /etc/seclogin/seclogin.conf
+
+# ---------------------------------------------------------------------------
+
+test_case "recovery generate — creates file with 5 codes"
+
+RECOVERY_FILE=/etc/seclogin/recovery.conf
+
+RECOVERY_OUTPUT=$("$BIN_RECOVERY" generate 2>/dev/null)
+nRc=$?
+nLines=$(grep -c . "$RECOVERY_FILE" 2>/dev/null || echo 0)
+
+if [ "$nRc" -eq 0 ] && [ -f "$RECOVERY_FILE" ] && [ "$nLines" -eq 5 ]; then
+    pass "recovery generate succeeded — $nLines codes written to $RECOVERY_FILE"
+else
+    fail "recovery generate failed (rc=$nRc, lines=$nLines)"
+fi
+
+RECOVERY_PERMS=$(stat -c "%a" "$RECOVERY_FILE" 2>/dev/null)
+RECOVERY_OWNER=$(stat -c "%U:%G" "$RECOVERY_FILE" 2>/dev/null)
+
+if [ "$RECOVERY_PERMS" = "640" ]; then
+    pass "recovery.conf permissions correct: $RECOVERY_PERMS"
+else
+    fail "recovery.conf permissions wrong: $RECOVERY_PERMS (expected 640)"
+fi
+
+if [ "$RECOVERY_OWNER" = "root:$ADMIN_GROUP" ]; then
+    pass "recovery.conf ownership correct: $RECOVERY_OWNER"
+else
+    fail "recovery.conf ownership wrong: $RECOVERY_OWNER (expected root:$ADMIN_GROUP)"
+fi
+
+echo
+info "seclogin-recovery generate writes 5 hashed entries to $RECOVERY_FILE."
+info "Plaintext codes are printed once to stdout and never stored."
+info "File must be root:$ADMIN_GROUP 0640 so gate mode (euid=seclogin) can read it."
+
+# ---------------------------------------------------------------------------
+
+test_case "recovery list — shows remaining count"
+
+REMAINING=$("$BIN_RECOVERY" list 2>/dev/null)
+
+if echo "$REMAINING" | grep -q "Remaining: 5"; then
+    pass "recovery list output correct: $REMAINING"
+else
+    fail "recovery list output unexpected: '$REMAINING'"
+fi
+
+echo
+info "seclogin-recovery list counts entries in $RECOVERY_FILE without revealing codes."
+
+# ---------------------------------------------------------------------------
+
+test_case "recovery generate — non-root rejected"
+
+nRc=$(su -s /bin/sh "$ADMIN_USER" -c "$BIN_RECOVERY generate > /dev/null 2>&1"; echo $?)
+
+if [ "$nRc" -ne 0 ]; then
+    pass "Non-root recovery generate rejected (rc=$nRc)"
+else
+    fail "Non-root recovery generate was not rejected"
+fi
+
+echo
+info "seclogin-recovery generate checks euid == 0 and refuses if not root."
+
+# ---------------------------------------------------------------------------
+
+test_case "recovery verify — code accepted and consumed"
+
+# Generate a fresh set, capture the first code
+RECOVERY_OUTPUT=$("$BIN_RECOVERY" generate 2>/dev/null)
+RECOVERY_CODE=$(echo "$RECOVERY_OUTPUT" | grep -E '^\s+[A-Z0-9]{4}-' | head -1 | tr -d ' ')
+
+if [ -z "$RECOVERY_CODE" ]; then
+    fail "Could not extract recovery code from generate output"
+else
+    info "Using recovery code: $RECOVERY_CODE"
+    nLines_before=$(grep -c . "$RECOVERY_FILE" 2>/dev/null || echo 0)
+
+    nRc=$("$BIN_RECOVERY" verify "$RECOVERY_CODE" > /dev/null 2>&1; echo $?)
+
+    nLines_after=$(grep -c . "$RECOVERY_FILE" 2>/dev/null || echo 0)
+
+    if [ "$nRc" -eq 0 ] && [ "$nLines_after" -eq $((nLines_before - 1)) ]; then
+        pass "Code accepted and consumed (entries: $nLines_before -> $nLines_after)"
+    else
+        fail "verify failed (rc=$nRc, entries: $nLines_before -> $nLines_after)"
+    fi
+fi
+
+echo
+info "seclogin-recovery verify accepts the code, removes it from $RECOVERY_FILE, and logs at LOG_CRIT."
+
+# ---------------------------------------------------------------------------
+
+test_case "recovery verify — single-use enforcement (rejected second time)"
+
+if [ "$QUICK" -eq 1 ]; then
+    skip "Skipped in quick mode"
+elif [ -z "$RECOVERY_CODE" ]; then
+    skip "No recovery code available from previous test"
+else
+    nRc=$("$BIN_RECOVERY" verify "$RECOVERY_CODE" > /dev/null 2>&1; echo $?)
+
+    if [ "$nRc" -eq 1 ]; then
+        pass "Used code correctly rejected on second attempt (rc=$nRc)"
+    else
+        fail "Used code was not rejected (rc=$nRc)"
+    fi
+fi
+
+echo
+info "Each recovery code is consumed on first use."
+info "Re-presenting the same code returns RECOVERY_DENIED (rc=1)."
 
 # ---------------------------------------------------------------------------
 # Remote verify mode setup
