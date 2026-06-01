@@ -700,15 +700,26 @@ Generate a new set of codes as soon as the authenticator is restored.
 
 ### Storage
 
-Recovery codes are stored hashed in `/etc/seclogin/recovery.conf`:
+Recovery codes are stored hashed in a dedicated subdirectory:
+
+```
+/etc/seclogin/recovery/               root:seclogin  770
+/etc/seclogin/recovery/recovery.conf  root:seclogin  660
+/etc/seclogin/recovery/recovery.lock  root:seclogin  660
+```
+
+The subdirectory is `770` so gate mode (`euid=seclogin`) can atomically rewrite
+`recovery.conf` via `rename()`. The parent `/etc/seclogin/` stays `750` — only
+this subdirectory is writable by the seclogin group. `totp.secret`, `seclogin.conf`
+and SSH keys in the parent directory are unaffected.
+
+Storage format — one entry per line:
 
 ```
 pbkdf2_sha512:250000:<salt_base64>:<hash_base64>
 ```
 
-One entry per line. Parameters are stored per entry to allow future changes
-without regenerating all codes. File: `root:seclogin 0640` — owned by root,
-group-readable by `seclogin` so both root shell mode and gate mode can verify codes.
+Parameters are stored per entry to allow future changes without regenerating all codes.
 
 ### Logging
 

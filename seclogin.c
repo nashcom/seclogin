@@ -135,18 +135,41 @@ static void debug_log(const char *pszFmt, ...)
     if (!g_fDebug)
         return;
 
-    /* O_NOFOLLOW: reject symlinks; O_CREAT with 0600: new files root-only */
-    fdLog = open(DEBUG_LOG_FILE, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW, 0600);
+    /* O_NOFOLLOW: reject symlinks; O_CREAT with 0660: root:seclogin rw-rw---- */
+    fdLog = open(DEBUG_LOG_FILE, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW, 0660);
     if (fdLog < 0)
+    {
+        if (errno == ENOENT || errno == EACCES)
+            syslog(LOG_AUTH | LOG_WARNING,
+                   "seclogin: debug log %s not available"
+                   " — run seclogin once as root to create it",
+                   DEBUG_LOG_FILE);
+        else
+            syslog(LOG_AUTH | LOG_ERR,
+                   "seclogin: debug_log: cannot open %s: %m", DEBUG_LOG_FILE);
         return;
+    }
+
+    /* Set root:seclogin ownership when running as root so gate mode can write */
+    if (geteuid() == 0)
+    {
+        struct group *pGrp = getgrnam("seclogin");
+        if (fchown(fdLog, 0, pGrp ? pGrp->gr_gid : 0) != 0)
+            syslog(LOG_AUTH | LOG_WARNING, "seclogin: debug_log: fchown failed: %m");
+        if (fchmod(fdLog, 0660) != 0)
+            syslog(LOG_AUTH | LOG_WARNING, "seclogin: debug_log: fchmod failed: %m");
+    }
 
     /* validate the opened file: must be a regular root-owned file,
-     * not writable by group or world — prevents log file hijacking */
+     * world-write rejected; group-write allowed (seclogin group is trusted) */
     if (fstat(fdLog, &st) != 0          ||
         !S_ISREG(st.st_mode)            ||
         st.st_uid != 0                  ||
-        (st.st_mode & (S_IWGRP | S_IWOTH)))
+        (st.st_mode & S_IWOTH))
     {
+        syslog(LOG_AUTH | LOG_ERR,
+               "seclogin: debug_log: %s failed safety check (uid=%d mode=%o)",
+               DEBUG_LOG_FILE, (int) st.st_uid, (unsigned) st.st_mode);
         close(fdLog);
         return;
     }
@@ -154,6 +177,7 @@ static void debug_log(const char *pszFmt, ...)
     pFile = fdopen(fdLog, "a");
     if (!pFile)
     {
+        syslog(LOG_AUTH | LOG_ERR, "seclogin: debug_log: fdopen failed: %m");
         close(fdLog);
         return;
     }

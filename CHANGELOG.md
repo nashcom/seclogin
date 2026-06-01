@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.1.1] - 2026-06-02
+
+### Fixed
+- Gate mode recovery code verification now works correctly
+  - Recovery files moved to `/etc/seclogin/recovery/` (`root:seclogin 770`) so
+    gate mode (`euid=seclogin`) can atomically rewrite `recovery.conf` via `rename()`
+  - `recovery.conf` and `recovery.lock` changed to `root:seclogin 660`
+  - `check_file_safety` accepts files owned by root or current euid (seclogin)
+  - `check_file_safety` allows group-writable files (world-write still rejected)
+- Debug log (`/var/log/seclogin-debug.log`) changed to `root:seclogin 660`
+  so gate mode can write debug entries
+- Debug log open failure now logs a clear actionable message when file is missing
+
+---
+
 ## [1.1.0] - 2026-06-01
 
 ### Added
@@ -13,7 +28,9 @@
   - File safety check: rejects symlinks, non-root ownership, group/other-writable
   - Parameters stored per entry (`pbkdf2_sha512:iter:salt:hash`) for forward compatibility
   - Return codes: `RECOVERY_OK` / `RECOVERY_DENIED` / `RECOVERY_ERROR`
-  - File: `root:seclogin 0640` - readable by both root shell mode and gate mode
+  - Dedicated subdirectory `/etc/seclogin/recovery/` (`root:seclogin 770`) -
+    group-writable so gate mode (euid=seclogin) can atomically rewrite recovery.conf;
+    parent `/etc/seclogin/` stays 750
 - `seclogin-recovery` admin binary (`root:root 0700`)
   - `generate` - generate 5 codes, print plaintext once, store hashed
   - `list`     - show remaining code count

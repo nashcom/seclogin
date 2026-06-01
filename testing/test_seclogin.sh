@@ -543,9 +543,11 @@ chmod 640 /etc/seclogin/seclogin.conf
 
 # ---------------------------------------------------------------------------
 
-test_case "recovery generate — creates file with 5 codes"
+test_case "recovery generate — creates directory and file with 5 codes"
 
-RECOVERY_FILE=/etc/seclogin/recovery.conf
+RECOVERY_DIR=/etc/seclogin/recovery
+RECOVERY_FILE=$RECOVERY_DIR/recovery.conf
+RECOVERY_LOCK=$RECOVERY_DIR/recovery.lock
 
 RECOVERY_OUTPUT=$("$BIN_RECOVERY" generate 2>/dev/null)
 nRc=$?
@@ -557,13 +559,28 @@ else
     fail "recovery generate failed (rc=$nRc, lines=$nLines)"
 fi
 
+DIR_PERMS=$(stat -c "%a" "$RECOVERY_DIR" 2>/dev/null)
+DIR_OWNER=$(stat -c "%U:%G" "$RECOVERY_DIR" 2>/dev/null)
+
+if [ "$DIR_PERMS" = "770" ]; then
+    pass "recovery/ directory permissions correct: $DIR_PERMS"
+else
+    fail "recovery/ directory permissions wrong: $DIR_PERMS (expected 770)"
+fi
+
+if [ "$DIR_OWNER" = "root:$ADMIN_GROUP" ]; then
+    pass "recovery/ directory ownership correct: $DIR_OWNER"
+else
+    fail "recovery/ directory ownership wrong: $DIR_OWNER (expected root:$ADMIN_GROUP)"
+fi
+
 RECOVERY_PERMS=$(stat -c "%a" "$RECOVERY_FILE" 2>/dev/null)
 RECOVERY_OWNER=$(stat -c "%U:%G" "$RECOVERY_FILE" 2>/dev/null)
 
-if [ "$RECOVERY_PERMS" = "640" ]; then
+if [ "$RECOVERY_PERMS" = "660" ]; then
     pass "recovery.conf permissions correct: $RECOVERY_PERMS"
 else
-    fail "recovery.conf permissions wrong: $RECOVERY_PERMS (expected 640)"
+    fail "recovery.conf permissions wrong: $RECOVERY_PERMS (expected 660)"
 fi
 
 if [ "$RECOVERY_OWNER" = "root:$ADMIN_GROUP" ]; then
@@ -572,10 +589,16 @@ else
     fail "recovery.conf ownership wrong: $RECOVERY_OWNER (expected root:$ADMIN_GROUP)"
 fi
 
+if [ -f "$RECOVERY_LOCK" ]; then
+    pass "recovery.lock pre-created by generate"
+else
+    fail "recovery.lock missing after generate"
+fi
+
 echo
-info "seclogin-recovery generate writes 5 hashed entries to $RECOVERY_FILE."
-info "Plaintext codes are printed once to stdout and never stored."
-info "File must be root:$ADMIN_GROUP 0640 so gate mode (euid=seclogin) can read it."
+info "recovery/ subdirectory: root:$ADMIN_GROUP 770 — group-writable so gate mode"
+info "(euid=seclogin) can atomically rewrite recovery.conf via rename()."
+info "/etc/seclogin/ stays 750 — only recovery/ is group-writable."
 
 # ---------------------------------------------------------------------------
 

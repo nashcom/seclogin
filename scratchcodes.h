@@ -4,9 +4,10 @@
 /* Recovery code module for seclogin.
  * File: /etc/seclogin/recovery.conf  owner: root:seclogin  mode: 0640 */
 
-#define RECOVERY_FILE       "/etc/seclogin/recovery.conf"
-#define RECOVERY_FILE_TMP   "/etc/seclogin/recovery.conf.tmp"
-#define RECOVERY_LOCK_FILE  "/etc/seclogin/recovery.lock"
+#define RECOVERY_DIR        "/etc/seclogin/recovery"
+#define RECOVERY_FILE       "/etc/seclogin/recovery/recovery.conf"
+#define RECOVERY_FILE_TMP   "/etc/seclogin/recovery/recovery.conf.tmp"
+#define RECOVERY_LOCK_FILE  "/etc/seclogin/recovery/recovery.lock"
 
 #define CODE_COUNT          5
 /* "XXXX-XXXX-XXXX-XXXX-XXXX-XXXX\0" = 6*4 + 5 dashes + NUL */

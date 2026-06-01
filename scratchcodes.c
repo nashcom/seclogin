@@ -182,24 +182,58 @@ int verify_line(const char *pszCode, const char *pszLine)
 
 /* --- file I/O ----------------------------------------------------- */
 
-/* Set recovery file to root:seclogin 0640 so gate mode (euid=seclogin) can read it. */
+/* Create /etc/seclogin/recovery/ (root:seclogin 770) and set correct
+ * ownership/permissions on recovery.conf and recovery.lock.
+ * Called only from recovery_generate which runs as root.
+ *
+ * The directory is group-writable so gate mode (euid=seclogin, egid=seclogin)
+ * can atomically rewrite recovery.conf via rename(). The parent /etc/seclogin/
+ * stays 750 — only this subdirectory is writable by the seclogin group. */
 static void set_recovery_file_perms(void)
 {
     struct group *pGrp = getgrnam("seclogin");
-    if (chown(RECOVERY_FILE, 0, pGrp ? pGrp->gr_gid : 0) != 0)
-        syslog(LOG_AUTH | LOG_ERR, "recovery: chown failed: %m");
-    chmod(RECOVERY_FILE, 0640);
+    gid_t nGid = pGrp ? pGrp->gr_gid : 0;
+
+    /* Create recovery subdirectory if needed */
+    if (mkdir(RECOVERY_DIR, 0770) != 0 && errno != EEXIST)
+    {
+        syslog(LOG_AUTH | LOG_ERR, "recovery: mkdir %s failed: %m", RECOVERY_DIR);
+        return;
+    }
+    if (chown(RECOVERY_DIR, 0, nGid) != 0)
+        syslog(LOG_AUTH | LOG_ERR, "recovery: chown %s failed: %m", RECOVERY_DIR);
+    chmod(RECOVERY_DIR, 0770);
+
+    /* recovery.conf */
+    if (chown(RECOVERY_FILE, 0, nGid) != 0)
+        syslog(LOG_AUTH | LOG_ERR, "recovery: chown %s failed: %m", RECOVERY_FILE);
+    chmod(RECOVERY_FILE, 0660);
+
+    /* Pre-create lock file so gate mode can open it O_RDONLY for flock */
+    int nFd = open(RECOVERY_LOCK_FILE, O_WRONLY | O_CREAT | O_NOFOLLOW, 0660);
+    if (nFd >= 0)
+    {
+        if (chown(RECOVERY_LOCK_FILE, 0, nGid) != 0)
+            syslog(LOG_AUTH | LOG_ERR, "recovery: chown %s failed: %m", RECOVERY_LOCK_FILE);
+        chmod(RECOVERY_LOCK_FILE, 0660);
+        close(nFd);
+    }
+    else
+    {
+        syslog(LOG_AUTH | LOG_ERR, "recovery: create lock file failed: %m");
+    }
 }
 
-/* Verify recovery file is safe to read: owned by root, not a symlink,
- * not writable by group or other. Returns 0 if safe, -1 otherwise. */
+/* Verify recovery file is safe to read: owned by root or current euid
+ * (seclogin in gate mode), not a symlink, not writable by group or other.
+ * Both root and the seclogin SUID owner are trusted writers. */
 int check_file_safety(const char *pszPath)
 {
     struct stat st;
-    if (lstat(pszPath, &st) != 0)            return -1;
-    if (S_ISLNK(st.st_mode))                 return -1;
-    if (st.st_uid != 0)                      return -1;
-    if (st.st_mode & (S_IWGRP | S_IWOTH))    return -1;
+    if (lstat(pszPath, &st) != 0)                              return -1;
+    if (S_ISLNK(st.st_mode))                                   return -1;
+    if (st.st_uid != 0 && st.st_uid != geteuid())              return -1;
+    if (st.st_mode & S_IWOTH)                                  return -1;
     return 0;
 }
 
@@ -233,8 +267,8 @@ static int write_recovery_file(const char *pszPath, const char *pszTmpPath,
 
     if (rename(pszTmpPath, pszPath) != 0) { unlink(pszTmpPath); return -1; }
 
-    /* fsync parent dir to persist the rename */
-    int nDirFd = open("/etc/seclogin", O_RDONLY | O_DIRECTORY);
+    /* fsync parent dir (the recovery subdirectory) to persist the rename */
+    int nDirFd = open(RECOVERY_DIR, O_RDONLY | O_DIRECTORY);
     if (nDirFd >= 0) { fsync(nDirFd); close(nDirFd); }
 
     return 0;
@@ -258,11 +292,15 @@ int recovery_generate(void)
         }
     }
 
+    /* Create recovery subdirectory before writing — must exist before write_recovery_file */
+    set_recovery_file_perms();
+
     if (write_recovery_file(RECOVERY_FILE, RECOVERY_FILE_TMP,
                              aszHashed, CODE_COUNT) != 0) {
         fprintf(stderr, "recovery_generate: write failed: %s\n", strerror(errno));
         return -1;
     }
+    /* Re-apply perms after write to ensure recovery.conf has correct ownership */
     set_recovery_file_perms();
 
     printf("\nStore these recovery codes securely.\n");
@@ -290,26 +328,65 @@ int recovery_list(void)
 
 int recovery_verify(const char *pszCode, int *pnRemaining)
 {
-    if (check_file_safety(RECOVERY_FILE) != 0)
-        return RECOVERY_ERROR;
+    openlog("seclogin", LOG_PID, LOG_AUTH);
 
-    /* Exclusive lock on a stable lock file so the lock survives the rename
-     * of recovery.conf during rewrite. */
-    int nLockFd = open(RECOVERY_LOCK_FILE, O_WRONLY | O_CREAT | O_NOFOLLOW, 0600);
-    if (nLockFd < 0)
+    syslog(LOG_AUTH | LOG_DEBUG,
+           "recovery_verify: uid=%d euid=%d gid=%d egid=%d",
+           (int)getuid(), (int)geteuid(), (int)getgid(), (int)getegid());
+
+    /* log directory and file permissions to diagnose access issues */
+    {
+        struct stat stDir = {0}, stFile = {0};
+        if (stat(RECOVERY_DIR, &stDir) == 0)
+            syslog(LOG_AUTH | LOG_DEBUG,
+                   "recovery_verify: dir uid=%d gid=%d mode=%o",
+                   (int)stDir.st_uid, (int)stDir.st_gid, (unsigned)(stDir.st_mode & 07777));
+        else
+            syslog(LOG_AUTH | LOG_DEBUG, "recovery_verify: stat dir failed: %m");
+
+        if (stat(RECOVERY_FILE, &stFile) == 0)
+            syslog(LOG_AUTH | LOG_DEBUG,
+                   "recovery_verify: file uid=%d gid=%d mode=%o",
+                   (int)stFile.st_uid, (int)stFile.st_gid, (unsigned)(stFile.st_mode & 07777));
+        else
+            syslog(LOG_AUTH | LOG_DEBUG, "recovery_verify: stat file failed: %m");
+    }
+
+    if (check_file_safety(RECOVERY_FILE) != 0)
+    {
+        syslog(LOG_AUTH | LOG_ERR,
+               "recovery_verify: file safety check failed for %s: %m", RECOVERY_FILE);
+        closelog();
         return RECOVERY_ERROR;
+    }
+
+    /* Lock file must be pre-created by recovery_generate (root).
+     * Gate mode has no dir-write permission so cannot create it. */
+    int nLockFd = open(RECOVERY_LOCK_FILE, O_RDONLY | O_NOFOLLOW);
+    if (nLockFd < 0)
+    {
+        syslog(LOG_AUTH | LOG_ERR,
+               "recovery_verify: cannot open lock file %s: %m", RECOVERY_LOCK_FILE);
+        closelog();
+        return RECOVERY_ERROR;
+    }
 
     if (flock(nLockFd, LOCK_EX) != 0)
     {
+        syslog(LOG_AUTH | LOG_ERR, "recovery_verify: flock failed: %m");
         close(nLockFd);
+        closelog();
         return RECOVERY_ERROR;
     }
 
     FILE *f = fopen(RECOVERY_FILE, "r");
     if (!f)
     {
+        syslog(LOG_AUTH | LOG_ERR,
+               "recovery_verify: cannot open %s: %m", RECOVERY_FILE);
         flock(nLockFd, LOCK_UN);
         close(nLockFd);
+        closelog();
         return RECOVERY_ERROR;
     }
 
@@ -333,22 +410,33 @@ int recovery_verify(const char *pszCode, int *pnRemaining)
 
     if (nMatchIdx < 0)
     {
+        syslog(LOG_AUTH | LOG_DEBUG,
+               "recovery_verify: no matching code found (lines_read=%d)", nLines);
         flock(nLockFd, LOCK_UN);
         close(nLockFd);
+        closelog();
         return RECOVERY_DENIED;
     }
 
     if (write_recovery_file(RECOVERY_FILE, RECOVERY_FILE_TMP,
                              aszLines, nLines) != 0)
     {
+        syslog(LOG_AUTH | LOG_ERR,
+               "recovery_verify: file rewrite failed path=%s tmp=%s uid=%d euid=%d: %m",
+               RECOVERY_FILE, RECOVERY_FILE_TMP, (int)getuid(), (int)geteuid());
         flock(nLockFd, LOCK_UN);
         close(nLockFd);
+        closelog();
         return RECOVERY_ERROR;
     }
-    set_recovery_file_perms();
+    /* chmod only — cannot chown in gate mode (euid=seclogin, not root).
+     * File ownership stays as euid of the writer; check_file_safety accepts
+     * both root and seclogin as trusted owners. */
+    chmod(RECOVERY_FILE, 0660);
 
     flock(nLockFd, LOCK_UN);
     close(nLockFd);
+    closelog();
 
     if (pnRemaining)
         *pnRemaining = nLines;

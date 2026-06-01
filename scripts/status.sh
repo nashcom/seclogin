@@ -12,6 +12,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/config"
 
 VERIFY_SECRET="$SECLOGIN_DIR/totp_verify.secret"
+RECOVERY_DIR="$SECLOGIN_DIR/recovery"
+RECOVERY_CONF="$RECOVERY_DIR/recovery.conf"
+RECOVERY_LOCK="$RECOVERY_DIR/recovery.lock"
 KNOWN_HOSTS="$SECLOGIN_DIR/known_hosts"
 DEBUG_LOG="/var/log/seclogin-debug.log"
 AUTH_KEY_PRIV="$AUTH_KEY_FILE"
@@ -200,6 +203,14 @@ process_items()
         miss "$(printf '%-4s  %-10s  %-20s  %s' "????" "----------" "(not installed)" "$INSTALL_DIR/$BIN_GATE")"
     fi
 
+    # seclogin-recovery: root:root 0700 — admin tool for recovery code management
+    if [ -f "$INSTALL_DIR/$BIN_RECOVERY" ]; then
+        item_file "$INSTALL_DIR/$BIN_RECOVERY" "root:root" "700"
+        note "root only — recovery code admin (generate, list, verify)"
+    else
+        miss "$(printf '%-4s  %-10s  %-20s  %s' "????" "----------" "(not installed)" "$INSTALL_DIR/$BIN_RECOVERY")"
+    fi
+
     if [ "$fClient" -eq 1 ]; then
         header "Client config"
         item_file "$CONFIG_FILE"                       "root:$ADMIN_GROUP" "640"
@@ -208,6 +219,15 @@ process_items()
         # (Gate-mode deployments that share this file need root:seclogin 0640 instead.)
         item_file "$SECLOGIN_DIR/totp.secret"          "root:root"         "600"
         item_file "$KNOWN_HOSTS"                       "root:$ADMIN_GROUP" "640"
+        if [ -d "$RECOVERY_DIR" ]; then
+            item_file "$RECOVERY_DIR"   "root:$ADMIN_GROUP" "770"
+            item_file "$RECOVERY_CONF"  "root:$ADMIN_GROUP" "660"
+            item_file "$RECOVERY_LOCK"  "root:$ADMIN_GROUP" "660"
+            CONF_OWNER=$(stat -c "%U" "$RECOVERY_CONF" 2>/dev/null)
+            if [ "$CONF_OWNER" != "root" ]; then
+                warn "recovery.conf not owned by root (owner=$CONF_OWNER) — run: sudo seclogin-recovery generate"
+            fi
+        fi
         item_file "$AUTH_KEY_PRIV"                     "root:$ADMIN_GROUP" "640"
     fi
 
@@ -219,11 +239,8 @@ process_items()
 
     if [ -f "$DEBUG_LOG" ]; then
         header "Debug log"
-        local logperm logowner
-        logperm=$(stat -c "%A" "$DEBUG_LOG")
-        logowner=$(stat -c "%U:%G" "$DEBUG_LOG")
-        logmode=$(stat -c "%a" "$DEBUG_LOG")
-        ok "$(printf '%-4s  %-10s  %-20s  %s  (%s lines)' "$logmode" "$logperm" "$logowner" "$DEBUG_LOG" "$(wc -l < $DEBUG_LOG; true)")"
+        item_file "$DEBUG_LOG" "root:$ADMIN_GROUP" "660"
+        note "$(wc -l < $DEBUG_LOG; true) lines"
     fi
 
     header "Users and groups"

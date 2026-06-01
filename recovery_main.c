@@ -15,17 +15,34 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include <openssl/crypto.h>
 
 /* --- self-tests --------------------------------------------------- */
 
-static int nPassCount = 0, nFailCount = 0;
+#define MAX_TESTS 64
+
+#define COL_GREEN  "\033[0;32m"
+#define COL_RED    "\033[0;31m"
+#define COL_NC     "\033[0m"
+
+static int  nPassCount                       = 0;
+static int  nFailCount                       = 0;
+static int  nSkipCount                       = 0;
+static int  nTestCount                       = 0;
+static const char *apszTestNames[MAX_TESTS]  = {0};
+static int  anTestResults[MAX_TESTS]         = {0};  /* 1=pass 0=fail -1=skip */
 
 #define CHECK(desc, expr) do { \
     int _r = (expr); \
-    if (_r) { printf("  PASS  %s\n", desc); nPassCount++; } \
-    else    { printf("  FAIL  %s\n", desc); nFailCount++; } \
+    if (nTestCount < MAX_TESTS) { \
+        apszTestNames[nTestCount] = (desc); \
+        anTestResults[nTestCount] = _r; \
+        nTestCount++; \
+    } \
+    if (_r) { printf("  " COL_GREEN "[PASS]" COL_NC "  %s\n", desc); nPassCount++; } \
+    else    { printf("  " COL_RED   "[FAIL]" COL_NC "  %s\n", desc); nFailCount++; } \
 } while(0)
 
 static const char g_szAlphabet[] = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -65,10 +82,15 @@ static int file_line_count(void)
 
 static int run_tests(void)
 {
-    printf("=== scratchcodes self-test ===\n\n");
+    time_t tStart = time(NULL);
 
-    /* -- code generation -- */
-    printf("-- code generation --\n");
+    printf("\n------------------------------------------------------------\n");
+    printf(" scratchcodes self-test\n");
+    printf("------------------------------------------------------------\n");
+
+    printf("\n------------------------------------------------------------\n");
+    printf(" Code generation\n");
+    printf("------------------------------------------------------------\n\n");
     char szCode[CODE_STR_LEN] = {0};
     CHECK("generate_code returns 0",    generate_code(szCode) == 0);
     CHECK("code length == 29",          (int)strlen(szCode) == CODE_STR_LEN - 1);
@@ -76,8 +98,9 @@ static int run_tests(void)
     CHECK("all chars valid",            all_valid_chars(szCode));
     printf("  sample: %s\n\n", szCode);
 
-    /* -- hash + verify -- */
-    printf("-- hash + verify --\n");
+    printf("\n------------------------------------------------------------\n");
+    printf(" Hash and verify\n");
+    printf("------------------------------------------------------------\n\n");
     char szLine[256] = {0};
     CHECK("hash_code returns 0",        hash_code(szCode, szLine, 256) == 0);
     CHECK("line starts with scheme",    strncmp(szLine, "pbkdf2_sha512:", 14) == 0);
@@ -93,19 +116,21 @@ static int run_tests(void)
     szCorrupt[20] ^= 0x01;
     CHECK("verify corrupt line -> <=0", verify_line(szCode, szCorrupt) <= 0);
 
-    /* -- verify_line: malformed input -- */
-    printf("\n-- verify_line malformed input --\n");
+    printf("\n------------------------------------------------------------\n");
+    printf(" Malformed input\n");
+    printf("------------------------------------------------------------\n\n");
     CHECK("missing fields -> -1",  verify_line(szCode, "notavalidline\n") == -1);
     CHECK("wrong scheme -> -1",    verify_line(szCode, "md5:1000:AAAA:BBBB\n") == -1);
     CHECK("zero iterations -> -1", verify_line(szCode, "pbkdf2_sha512:0:AAAA:BBBB\n") == -1);
     CHECK("empty string -> -1",    verify_line(szCode, "\n") == -1);
 
-    /* -- file safety checks -- */
-    printf("\n-- file safety --\n");
+    printf("\n------------------------------------------------------------\n");
+    printf(" File safety\n");
+    printf("------------------------------------------------------------\n\n");
 
     CHECK("missing file -> -1", check_file_safety("/tmp/scratchcodes_noexist_test") == -1);
 
-    /* group-writable file */
+    /* group-writable file — allowed (recovery.conf is root:seclogin 660) */
     {
         const char *pszTmp = "/tmp/scratchcodes_gwtest";
         FILE *fTmp = fopen(pszTmp, "w");
@@ -115,11 +140,11 @@ static int run_tests(void)
             fclose(fTmp);
         }
         chmod(pszTmp, 0660);
-        CHECK("group-writable file -> -1", check_file_safety(pszTmp) == -1);
+        CHECK("group-writable file -> 0 (allowed)", check_file_safety(pszTmp) == 0);
         unlink(pszTmp);
     }
 
-    /* other-writable file */
+    /* world-writable file — rejected */
     {
         const char *pszTmp = "/tmp/scratchcodes_owtest";
         FILE *fTmp = fopen(pszTmp, "w");
@@ -128,8 +153,8 @@ static int run_tests(void)
             fputs("x\n", fTmp);
             fclose(fTmp);
         }
-        chmod(pszTmp, 0606);
-        CHECK("other-writable file -> -1", check_file_safety(pszTmp) == -1);
+        chmod(pszTmp, 0666);
+        CHECK("world-writable file -> -1", check_file_safety(pszTmp) == -1);
         unlink(pszTmp);
     }
 
@@ -151,20 +176,22 @@ static int run_tests(void)
         unlink(pszTarget);
     }
 
-    /* -- recovery_verify on missing file -- */
-    printf("\n-- recovery_verify edge cases --\n");
+    printf("\n------------------------------------------------------------\n");
+    printf(" Edge cases\n");
+    printf("------------------------------------------------------------\n\n");
     unlink(RECOVERY_FILE);
     CHECK("verify with missing file -> RECOVERY_ERROR",
           recovery_verify("XXXX-XXXX-XXXX-XXXX-XXXX-XXXX", NULL) == RECOVERY_ERROR);
 
-    /* -- live file: generate -- */
-    printf("\n-- live file test (writes to %s) --\n", RECOVERY_FILE);
+    printf("\n------------------------------------------------------------\n");
+    printf(" Live file test\n");
+    printf("------------------------------------------------------------\n\n");
     CHECK("recovery_generate returns 0",      recovery_generate() == 0);
     CHECK("5 entries in file after generate", file_line_count() == CODE_COUNT);
 
-    /* -- verify round-trip --
-     * Generate a single known code, write it as the only entry, then verify. */
-    printf("\n-- verify round-trip --\n");
+    printf("\n------------------------------------------------------------\n");
+    printf(" Verify round-trip\n");
+    printf("------------------------------------------------------------\n\n");
     char szKnown[CODE_STR_LEN] = {0};
     CHECK("generate known code", generate_code(szKnown) == 0);
 
@@ -189,7 +216,31 @@ static int run_tests(void)
     int ret2 = recovery_verify(szKnown, NULL);
     CHECK("same code rejected -> RECOVERY_DENIED", ret2 == RECOVERY_DENIED);
 
-    printf("\n=== %d passed, %d failed ===\n", nPassCount, nFailCount);
+    printf("\n------------------------------------------------------------\n");
+    printf(" Summary\n");
+    printf("------------------------------------------------------------\n\n");
+
+    /* width of the highest test number for right-alignment */
+    int nWidth = nTestCount >= 10 ? 2 : 1;
+
+    for (int i = 0; i < nTestCount; i++)
+    {
+        if (anTestResults[i] > 0)
+            printf("  " COL_GREEN "[PASS]" COL_NC "  %*d: %s\n", nWidth, i + 1, apszTestNames[i]);
+        else
+            printf("  " COL_RED   "[FAIL]" COL_NC "  %*d: %s\n", nWidth, i + 1, apszTestNames[i]);
+    }
+
+    printf("\n------------------------------------------------------------\n");
+    printf(" Results\n");
+    printf("------------------------------------------------------------\n\n");
+
+    printf("  " COL_GREEN "[PASS]" COL_NC "  %3d\n", nPassCount);
+    printf("  " COL_RED   "[FAIL]" COL_NC "  %3d\n", nFailCount);
+    printf("  [SKIP]  %3d\n", nSkipCount);
+    printf("  Runtime %2ds\n", (int)(time(NULL) - tStart));
+    printf("\n");
+
     return nFailCount ? 1 : 0;
 }
 
